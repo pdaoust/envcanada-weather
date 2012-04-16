@@ -17,6 +17,8 @@ global $envcanadaweather_cacheTableName;
 $envcanadaweather_cacheTableName = $wpdb->prefix."envcanadaweather_cache";
 
 class EnvCanadaWeather {
+	/* $weatherData is just a hashed cache; keys are city codes and
+	   values are an array of fields */
 	private static $weatherData = array ();
 	private static $defaults = array (
 		'province' => 'BC',
@@ -24,37 +26,42 @@ class EnvCanadaWeather {
 		'updateInterval' => 3600 // one hour
 	);
 	private static $dbVersion = '0.1';
+	/* acceptable fields and type hint(s) for each; the first in the
+	 * array is the default hint. Note: for time data, 'string' is an
+	 * alias for 'datetime' */
 	private static $fields = array (
-		'province' => 'string',
-		'citycode' => 'string',
-		'timestamp' => 'timestamp',
-		'dateTime' => 'timestamp',
-		'lat' => 'float',
-		'lon' => 'float',
-		'city' => 'string',
-		'region' => 'string',
-		'stationCode' => 'string',
-		'stationLat' => 'float',
-		'stationLon' => 'float',
-		'observationDateTime' => 'timestamp',
-		'condition' => 'string',
-		'iconCode' => 'int',
-		'temperature' => 'float',
-		'dewpoint' => 'float',
-		'pressure' => 'float',
-		'pressureChange' => 'float',
-		'pressureTendency' => 'string',
-		'visibility' => 'float',
-		'relativeHumidity' => 'float',
-		'humidex' => 'float',
-		'windSpeed' => 'float',
-		'windGust' => 'float',
-		'windDirection' => 'string',
-		'windBearing' => 'int',
-		'windChill' => 'float'
+		'province' => array('string'),
+		'citycode' => array('string'),
+		'timestamp' => array('timestamp', 'string', 'datetime', 'date', 'time'),
+		'dateTime' => array('timestamp', 'string', 'datetime', 'date', 'time'),
+		'lat' => array('float', 'int'),
+		'lon' => array('float', 'int'),
+		'city' => array('string'),
+		'region' => array('string'),
+		'stationCode' => array('string'),
+		'stationLat' => array('float', 'int'),
+		'stationLon' => array('float', 'int'),
+		'observationDateTime' => array('timestamp', 'string', 'datetime', 'date', 'time'),
+		'condition' => array('string'),
+		'iconCode' => array('int', 'string'),
+		'temperature' => array('float', 'int'),
+		'dewpoint' => array('float', 'int'),
+		'pressure' => array('float', 'int'),
+		'pressureChange' => array('float', 'int'),
+		'pressureTendency' => array('string'),
+		'visibility' => array('float', 'int'),
+		'relativeHumidity' => array('float', 'int'),
+		'humidex' => array('float', 'int'),
+		'windSpeed' => array('float', 'int'),
+		'windGust' => array('float', 'int'),
+		'windDirection' => array('string'),
+		'windBearing' => array('int'),
+		'windChill' => array('float', 'int')
 	);
 	private static $cityCodes = array (
 	);
+	/* a list of short descriptions mapped to icon codes; useful for
+	   CSS hooks */
 	private static $iconCodes = array (
 		'sunny',						// 00
 		'mainlysunny',					// 01
@@ -102,6 +109,8 @@ class EnvCanadaWeather {
 		'dust'							// 45
 	);
 
+	/* set up cache table in database, and insert default city, prov,
+	 * and update interval into wp_config table if they don't exist */
 	public function install () {
 		global $envcanadaweather_cacheTableName;
 		$q = "CREATE TABLE $envcanadaweather_cacheTableName ("
@@ -135,7 +144,7 @@ class EnvCanadaWeather {
 			."	PRIMARY KEY (province, citycode)"
 			.")";
 		require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
-		dbDelta($q);
+		dbDelta($q); // WordPress' built-in database upgrade function
 		add_option('envcanadaweather_dbversion', self::$dbVersion);
 		if (!get_site_option('envcanadaweather_defaultprovince')) {
 			add_option('envcanadaweather_defaultprovince', self::$defaults['province']);
@@ -149,25 +158,56 @@ class EnvCanadaWeather {
 	}
 
 	public function activate () {
-		if (get_site_option('envcanadaweather_dbversion') != $GLOBALS['envcanadaweather_dbVersion']) {
+		// check installed table against this plugin's version
+		if (get_site_option('envcanadaweather_dbversion') != self::$dbVersion) {
 			self::install();
 		}
+		/* get location and update interval defaults for when none are
+		 * specified by shortcode */
 		self::$defaults['province'] = get_site_option('envcanadaweather_defaultprovince');
 		self::$defaults['citycode'] = get_site_option('envcanadaweather_defaultcitycode');
 		self::$defaults['updateinterval'] = get_site_option('envcanadaweather_updateinterval');
 	}
 
-	public function getData () {
+	/* function for using in a template; convenience function for
+	 * _getData() */
+	public function getData (/* $field [,$format, [$citycode, $province]] */) {
 		$attrs = array ();
 		$args = func_get_args();
 		foreach (array ('field', 'format', 'citycode', 'province') as $arg) {
-			$attrs[$arg] = array_shift($args);
+			if (count($args)) {
+				$attrs[$arg] = array_shift($args);
+			}
 		}
 		return self::_getData($attrs);
 	}
 
+	/* return a certain piece of weather information; conforms to WP's
+	 * shortcode interface by accepting an array of arguments:
+	 *
+	 * 		'field': the piece of information to return (see above
+	 * 		$fields property for a list of valid fields)
+	 *
+	 * 		'format': an optional argument that parses the field in an
+	 * 		alternate format to the one specified in $fields. Possible
+	 * 		values:
+	 * 			'float': convert a value to a float
+	 * 			'int': make sure the value is not a float; rounds to
+	 * 			the nearest integer
+	 * 			'string': currently for icon codes only; converts an
+	 * 			icon code to its corresponding hint (see above
+	 * 			$iconCodes property)
+	 *
+	 * 		'citycode': an optional city code; if not specified, uses
+	 * 		envcanadaweather_defaultcitycode from the wp_options table
+	 *
+	 * 		'province': required if 'citycode' is specified; helps us
+	 * 		find the correct folder on Environment Canada's server.
+	 * 		Really, this should be automatic, but it isn't yet :) */
+
 	public function _getData ($attrs) {
 		global $wpdb, $envcanadaweather_cacheTableName;
+		// get defaults for city
 		if (!isset($attrs['province']) && !isset($attrs['citycode'])) {
 			$province = self::$defaults['province'];
 			$citycode = self::$defaults['citycode'];
@@ -175,45 +215,85 @@ class EnvCanadaWeather {
 			$province = $attrs['province'];
 			$citycode = $attrs['citycode'];
 		}
+		// create a key for the database (and self::$weatherData) cache
 		$cacheKey = $province.':'.$citycode;
+		// is the data cached in memory?
 		if (isset(self::$weatherData[$cacheKey])) {
 			$weatherData = self::$weatherData[$cacheKey];
 		} else {
+			// if it's not in memory, is it stored in the database?
 			$q = "SELECT *, UNIX_TIMESTAMP(`timestamp`) AS `timestamp` FROM $envcanadaweather_cacheTableName WHERE province = '".mysql_real_escape_string($province)."' AND citycode = '".mysql_real_escape_string($citycode)."'";
 			$weatherData = $wpdb->get_row($q, ARRAY_A);
 			if ($weatherData) {
 				self::$weatherData[$cacheKey] = $weatherData;
 			}
 		}
+		/* if not, or if the data is stale, let's prime both memory and
+		 * db cache with fresh info */
 		if (!$weatherData || $weatherData['timestamp'] + self::$defaults['updateinterval'] < time()) {
 			$weatherData = self::fetchData($province, $citycode);
 		}
 		if ($weatherData) {
+			// get the proper format; fall over to default if invalid
+			$format = null;
 			if (isset($attrs['format']) && $attrs['format']) {
-				$format = $attrs['format'];
-			} else {
-				$format = self::$fields[$attrs['field']];
+				if (in_array($attrs['format'], self::$fields[$attrs['field']])) {
+					$format = $attrs['format'];
+				}
 			}
+			if (is_null($format)) {
+				$format = self::$fields[$attrs['field']][0];
+			}
+			// and then output the data!
 			switch ($format) {
 				case 'float':
 					return (float) $weatherData[$attrs['field']];
 				case 'int':
-					return (int) $weatherData[$attrs['field']];
+				case 'timestamp':
+					/* still not decided on whether this should be round
+					 * or floor -- round is more accurate, but it looks
+					 * weird when you've got 29.6°C in one spot and 30°C
+					 * in another */
+					return round($weatherData[$attrs['field']]);
 				case 'string':
+					/* get the icon code hint instead of the icon code
+					 * itself */
 					if ($attrs['field'] == 'iconCode') {
 						return self::$iconCodes[(int) $weatherData['iconCode']];
 					}
+				// falls over into timestamp formatters
+				case 'date':
+				case 'time':
+				case 'datetime':
+					if (in_array($attrs['field'], array('timestamp', 'dateTime', 'observationDateTime'))) {
+						/* construct the date based on whether the date,
+						 * time, or both ('string') were asked for */
+						$dateFormat = array();
+						if (in_array($format, array('date', 'string'))) {
+							$dateFormat[] = get_site_option('date_format');
+						}
+						if (in_array($format, array('time', 'string'))) {
+							$dateFormat[] = get_site_option('time_format');
+						}
+						$dateFormat = implode(' ', $dateFormat);
+						return date($dateFormat);
+					}
+				/* falls over into just spewing out the raw data for all
+				 * other string-based data */
 				default:
-					return $weatherData[$attrs['field']];
+					return (string) $weatherData[$attrs['field']];
 			}
 		}
 	}
 
+	// convenience function; prints out the result of getData();
 	public function printData () {
 		$attrs = array ();
 		$args = func_get_args();
 		foreach (array ('field', 'format', 'citycode', 'province') as $arg) {
-			$attrs[$arg] = array_shift($args);
+			if (count($args)) {
+				$attrs[$arg] = array_shift($args);
+			}
 		}
 		return self::_printData($attrs);
 	}
@@ -222,6 +302,8 @@ class EnvCanadaWeather {
 		echo self::_getData($attrs);
 	}
 
+	/* charge up the cache with data; should only be called when cache
+	 * is either expired or empty for a given city */
 	private function fetchData ($province, $citycode) {
 		global $wpdb, $envcanadaweather_cacheTableName;
 		$url = "http://dd.weatheroffice.ec.gc.ca/citypage_weather/xml/".urlencode($province)."/".urlencode($citycode)."_e.xml";
@@ -230,10 +312,12 @@ class EnvCanadaWeather {
 			return false;
 		}
 
+		// get the most important bit; the currentConditions
 		$weather = new SimpleXMLElement($xml);
 		$current = $weather->currentConditions;
 		$weatherData = array ();
 
+		// get all the useful parts from the XML
 		$weatherData['province'] = $province;
 		$weatherData['citycode'] = $citycode;
 		$weatherData['timestamp'] = time();
@@ -268,9 +352,11 @@ class EnvCanadaWeather {
 		$weatherData['windDirection'] = (string) $current->wind->direction;
 		$weatherData['windBearing'] = (float) $current->wind->bearing;
 
+		// add data to memory cache
 		$cacheKey = $province.':'.$citycode;
 		self::$weatherData[$cacheKey] = $weatherData;
 
+		// add data to database cache
 		$q = "REPLACE INTO $envcanadaweather_cacheTableName SET ";
 		$qArray = array();
 
@@ -279,7 +365,7 @@ class EnvCanadaWeather {
 			if (is_null($weatherData[$fieldName])) {
 				$thisQ .= 'NULL';
 			} else {
-				switch ($fieldType) {
+				switch ($fieldType[0]) {
 					case 'string':
 						$thisQ .= "'".mysql_real_escape_string($weatherData[$fieldName])."'";
 						break;
@@ -300,6 +386,8 @@ class EnvCanadaWeather {
 		return $weatherData;
 	}
 
+	/* converts unsigned coordinates (with 'N', 'S', 'E', and 'W') into
+	 * more standard signed coordinates */
 	private function convertGeoData ($coord) {
 		$coord = str_split($coord);
 		$direction = strtoupper(array_pop($coord));
@@ -311,6 +399,7 @@ class EnvCanadaWeather {
 		}
 	}
 
+	/* converts time data into UNIX timestamp */
 	private function convertTimeData ($datetime) {
 		return strtotime(str_replace('at ', '', $datetime));
 	}
