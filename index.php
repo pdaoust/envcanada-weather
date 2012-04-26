@@ -622,7 +622,7 @@ class EnvCanadaWeather {
 		$qArray = array();
 
 		foreach (self::$fieldHints as $fieldName => $fieldType) {
-			if ($fieldName == 'warnings') {
+			//if ($fieldName == 'warnings') {
 
 			$thisQ = "`$fieldName` = ";
 			if (is_null($weatherData[$fieldName])) {
