@@ -425,16 +425,17 @@ class EnvCanadaWeather {
 			case 'string':
 				/* get the icon code hint instead of the icon code
 				 * itself */
-				if ($attrs['field'] == 'iconCode') {
+				if ($field == 'iconCode') {
 					return self::$iconCodes[(int) $weatherDatum];
 				}
 			// falls over into timestamp formatters
 			case 'date':
 			case 'time':
 			case 'datetime':
+				echo $field;
 				if (in_array($field, array('timestamp', 'dateTime')) || (strpos($field, 'DateTime') >= 0)) {
-					/* construct the date based on whether the date,
-					 * time, or both ('string') were asked for */
+					/* construct the date based on whether the date, time,
+					 * or both ('string' or 'datetime') were asked for */
 					$dateFormat = array();
 					if (in_array($format, array('date', 'string'))) {
 						$dateFormat[] = get_site_option('date_format');
@@ -443,7 +444,7 @@ class EnvCanadaWeather {
 						$dateFormat[] = get_site_option('time_format');
 					}
 					$dateFormat = implode(' ', $dateFormat);
-					return 'AAAAAAA'.date($dateFormat, $weatherDatum);
+					return date($dateFormat, $weatherDatum);
 				}
 			/* falls over into just spewing out the raw data for all
 			 * other string-based data */
