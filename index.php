@@ -406,7 +406,7 @@ class EnvCanadaWeather {
 		}
 		// is this node in the weather data an array? if so, dig deeper
 		if (in_array('array', $fieldHint)) {
-			return self::_getDataRecursive($fields, $format, $weatherDatum, $fieldHint);
+			return self::_getDataRecursive($fields, $format, $weatherDatum, $fieldHint['children']);
 		}
 		// fais gracefully when the specified format is not allowed
 		if (!in_array($format, $fieldHint)) {
@@ -432,7 +432,6 @@ class EnvCanadaWeather {
 			case 'date':
 			case 'time':
 			case 'datetime':
-				echo $field;
 				if (in_array($field, array('timestamp', 'dateTime')) || (strpos($field, 'DateTime') !== false)) {
 					/* construct the date based on whether the date, time,
 					 * or both ('string' or 'datetime') were asked for */
