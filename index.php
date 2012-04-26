@@ -432,7 +432,7 @@ class EnvCanadaWeather {
 			case 'date':
 			case 'time':
 			case 'datetime':
-				if (in_array($field, array('timestamp', 'dateTime')) || strpos($field, 'DateTime') >= 0) {
+				if (in_array($field, array('timestamp', 'dateTime')) || (strpos($field, 'DateTime') >= 0)) {
 					/* construct the date based on whether the date,
 					 * time, or both ('string') were asked for */
 					$dateFormat = array();
@@ -443,7 +443,7 @@ class EnvCanadaWeather {
 						$dateFormat[] = get_site_option('time_format');
 					}
 					$dateFormat = implode(' ', $dateFormat);
-					return date($dateFormat);
+					return 'AAAAAAA'.date($dateFormat, $weatherDatum);
 				}
 			/* falls over into just spewing out the raw data for all
 			 * other string-based data */
@@ -622,6 +622,8 @@ class EnvCanadaWeather {
 		$qArray = array();
 
 		foreach (self::$fieldHints as $fieldName => $fieldType) {
+			if ($fieldName == 'warnings') {
+
 			$thisQ = "`$fieldName` = ";
 			if (is_null($weatherData[$fieldName])) {
 				$thisQ .= 'NULL';
