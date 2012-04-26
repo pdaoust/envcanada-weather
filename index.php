@@ -433,7 +433,7 @@ class EnvCanadaWeather {
 			case 'time':
 			case 'datetime':
 				echo $field;
-				if (in_array($field, array('timestamp', 'dateTime')) || (strpos($field, 'DateTime') >= 0)) {
+				if (in_array($field, array('timestamp', 'dateTime')) || (strpos($field, 'DateTime') !== false)) {
 					/* construct the date based on whether the date, time,
 					 * or both ('string' or 'datetime') were asked for */
 					$dateFormat = array();
