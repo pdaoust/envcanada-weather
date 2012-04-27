@@ -365,7 +365,6 @@ class EnvCanadaWeather {
 						'windPeriod' => null,
 						'windDateTime' => null
 					);
-					echo 'row count: '.count($forecastsData)."\n";
 					foreach ($forecastsData as $forecastData) {
 						// get and prune the wind data from the row
 						$windData = array_intersect_key($forecastData, $windKeys);
@@ -379,7 +378,6 @@ class EnvCanadaWeather {
 						 * any grouping, we need to check to see if this
 						 * forecast is already in the array */
 						$period = $forecastData['period'];
-						echo 'period: '.$period."\n";
 						if (!isset($weatherData['forecasts'][$period])) {
 							$weatherData['forecasts'][$period] = $forecastData;
 							$thisForecast = &$weatherData['forecasts'][$period];
