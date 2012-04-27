@@ -1,14 +1,14 @@
 <?php
 /**
  * @package EnvCanadaWeather
- * @version 0.2
+ * @version 0.3
  */
 /*
 Plugin Name: Environment Canada Weather widgets
 Plugin URI: http://wordpress.org/extend/plugins/envcanadaweather/
 Description: Add various bits of current weather data from Environment Canada's XML weather service. No forecast data yet, but you've got everything else. To find your city code, go to http://dd.weatheroffice.ec.gc.ca/citypage_weather/docs/site_list_provinces_en.html
 Author: Paul d'Aoust
-Version: 0.2
+Version: 0.3
 Author URI: http://heliosstudio.ca
 */
 
@@ -28,7 +28,7 @@ class EnvCanadaWeather {
 		'citycode' => 's0000772', // Penticton
 		'updateInterval' => 3600 // one hour
 	);
-	private static $dbVersion = '0.2';
+	private static $dbVersion = '0.7';
 	/* acceptable fields and type hint(s) for each; the first in the
 	 * array is the default hint. Note: for time data, 'string' is an
 	 * alias for 'datetime' */
@@ -67,7 +67,8 @@ class EnvCanadaWeather {
 				'priority' => array('string'),
 				'description' => array('string'),
 				'eventIssueDateTime' => array('timestamp', 'string', 'datetime', 'date', 'time')
-			)
+			),
+			'table' => null
 		),
 		'regionalNormalsLow' => array('float', 'int'),
 		'regionalNormalsHigh' => array('float', 'int'),
@@ -87,22 +88,31 @@ class EnvCanadaWeather {
 				'windTextSummary' => array('string'),
 				'winds' => array ('array',
 					'children' => array(
+						'index' => array('int'),
 						'rank' => array('string'),
 						'windSpeed' => array('float', 'int'),
 						'windGust' => array('float', 'int'),
 						'windDirection' => array('string'),
 						'windBearing' => array('float', 'int'),
-					)
+					),
+					'table' => null,
+					'primaryKey' => 'index',
+					'foreignKey' => 'period'
 				),
 				'precipitationTextSummary' => array('string'),
 				'precipType' => array('string'),
 				'precipitationAccumulationType' => array('string'),
 				'precipitationAmount' => array('float', 'int'),
+				'uvIndex' => array('int'),
+				'uvCategory' => array('string'),
+				'uvTextSummary' => array('string'),
 				'relativeHumidity' => array('float', 'int'),
 				'comfort' => array('string'),
 				'frost' => array('string'),
 				'snowLevelTextSummary' => array('string')
-			)
+			),
+			'table' => null,
+			'primaryKey' => 'period'
 		),
 		'yesterdayTemperatureLow' => array('float', 'int'),
 		'yesterdayTemperatureHigh' => array('float', 'int'),
@@ -162,12 +172,15 @@ class EnvCanadaWeather {
 	/* set up cache table in database, and insert default city, prov,
 	 * and update interval into wp_config table if they don't exist */
 	public function install () {
-		global $envcanadaweather_cacheTableName, $envcanadaweather_warningsTableName, $envcanadaweather_forecastsTableName, $envcanadaweather_forecastsWindsTableName;
+		global $wpdb, $envcanadaweather_cacheTableName, $envcanadaweather_warningsTableName, $envcanadaweather_forecastsTableName, $envcanadaweather_forecastsWindsTableName;
+		require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+		$q = "DROP TABLE $envcanadaweather_cacheTableName, $envcanadaweather_warningsTableName, $envcanadaweather_forecastsTableName, $envcanadaweather_forecastsWindsTableName";
+		$wpdb->query($q);
 		$q = "CREATE TABLE $envcanadaweather_cacheTableName ("
-			."	province CHAR(2),"
-			."	citycode CHAR(8),"
+			."	province VARCHAR(2),"
+			."	citycode VARCHAR(8),"
 			."	`timestamp` DATETIME,"
-			."	dateTime DATETIME,"
+			."	`dateTime` DATETIME,"
 			."	lat DECIMAL(5,2),"
 			."	lon DECIMAL(5,2),"
 			."	city VARCHAR(50),"
@@ -198,23 +211,25 @@ class EnvCanadaWeather {
 			."	yesterdayTemperatureLow DECIMAL(5,2),"
 			."	yesterdayTemperatureHigh DECIMAL(5,2),"
 			."	yesterdayPrecip DECIMAL(5,2),"
-			."	PRIMARY KEY (province, citycode)"
+			."	PRIMARY KEY  (province, citycode)"
 			.");";
-		$q .= "CREATE TABLE $envcanadaweather_warningsTableName ("
-			."	citycode CHAR(8),"
+		dbDelta($q); // WordPress' built-in database upgrade function
+		$q = "CREATE TABLE $envcanadaweather_warningsTableName ("
+			."	citycode VARCHAR(8),"
 			."	type ENUM('', 'advisory', 'warning', 'watch', 'ended'),"
 			."	priority ENUM('', 'low', 'medium', 'high', 'urgent'),"
 			."	description VARCHAR(50),"
 			."	eventIssueDateTime DATETIME"
 			.");";
-		$q .= "CREATE TABLE $envcanadaweather_forecastsTableName ("
-			."	citycode CHAR(8),"
+		dbDelta($q); // WordPress' built-in database upgrade function
+		$q = "CREATE TABLE $envcanadaweather_forecastsTableName ("
+			."	citycode VARCHAR(8),"
 			."	period VARCHAR(12),"
 			."	periodLong VARCHAR(12),"
 			."	`dateTime` DATETIME,"
-			."	textSummary => VARCHAR(500),"
-			."	cloudPrecipTextSummary => VARCHAR(500),"
-			."	iconCode => SMALLINT(3) UNSIGNED,"
+			."	textSummary VARCHAR(500),"
+			."	cloudPrecipTextSummary VARCHAR(500),"
+			."	iconCode SMALLINT(3) UNSIGNED,"
 			."	pop DECIMAL(5,2),"
 			."	abbreviatedTextSummary VARCHAR(255),"
 			."	temperatureLow DECIMAL(5,2),"
@@ -222,25 +237,30 @@ class EnvCanadaWeather {
 			."	windTextSummary VARCHAR(255),"
 			."	precipitationTextSummary VARCHAR(255),"
 			."	precipType VARCHAR(20),"
-			."	precipitationAccumulationType VARCHAR(20)"
+			."	precipitationAccumulationType VARCHAR(20),"
 			."	precipitationAmount DECIMAL(5,2),"
+			."	uvIndex SMALLINT(3) UNSIGNED,"
+			."	uvCategory VARCHAR(20),"
+			."	uvTextSummary VARCHAR(255),"
 			."	relativeHumidity DECIMAL(5,2),"
 			."	comfort VARCHAR(255),"
 			."	frost VARCHAR(255),"
 			."	snowLevelTextSummary VARCHAR(255),"
-			."	PRIMARY KEY (citycode, period)"
+			."	PRIMARY KEY  (citycode, period)"
 			.");";
-		$q .= "CREATE TABLE $envcanadaweather_forecastsWindsTableName ("
-			."	cityCode CHAR(8),"
+		dbDelta($q); // WordPress' built-in database upgrade function
+		$q = "CREATE TABLE $envcanadaweather_forecastsWindsTableName ("
+			."	cityCode VARCHAR(8),"
+			."	period VARCHAR(12),"
+			."	`index` SMALLINT(3) UNSIGNED,"
 			."	rank ENUM('', 'major', 'minor'),"
 			."	windSpeed DECIMAL(5,2),"
 			."	windGust DECIMAL(5,2),"
 			."	windDirection ENUM('','N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SSO','SW','SO','WSW','OSO','W','O','WNW','ONO','NW','NO','NNW','NNO','VR'),"
-			."	windBearing DECIMAL(5,2),"
+			."	windBearing DECIMAL(5,2)"
 			.");";
-		require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
 		dbDelta($q); // WordPress' built-in database upgrade function
-		add_option('envcanadaweather_dbversion', self::$dbVersion);
+		update_option('envcanadaweather_dbversion', self::$dbVersion);
 		if (!get_site_option('envcanadaweather_defaultprovince')) {
 			add_option('envcanadaweather_defaultprovince', self::$defaults['province']);
 		}
@@ -253,6 +273,7 @@ class EnvCanadaWeather {
 	}
 
 	public function activate () {
+		global $envcanadaweather_warningsTableName, $envcanadaweather_forecastsTableName, $envcanadaweather_forecastsWindsTableName;
 		// check installed table against this plugin's version
 		if (get_site_option('envcanadaweather_dbversion') != self::$dbVersion) {
 			self::install();
@@ -262,6 +283,9 @@ class EnvCanadaWeather {
 		self::$defaults['province'] = get_site_option('envcanadaweather_defaultprovince');
 		self::$defaults['citycode'] = get_site_option('envcanadaweather_defaultcitycode');
 		self::$defaults['updateinterval'] = get_site_option('envcanadaweather_updateinterval');
+		self::$fieldHints['warnings']['table'] = $envcanadaweather_warningsTableName;
+		self::$fieldHints['forecasts']['table'] = $envcanadaweather_forecastsTableName;
+		self::$fieldHints['forecasts']['children']['winds']['table'] = $envcanadaweather_forecastsWindsTableName;
 	}
 
 	/* function for using in a template; convenience function for
@@ -301,7 +325,7 @@ class EnvCanadaWeather {
 	 * 		Really, this should be automatic, but it isn't yet :) */
 
 	public function _getData ($attrs) {
-		global $wpdb, $envcanadaweather_cacheTableName;
+		global $wpdb, $envcanadaweather_cacheTableName, $envcanadaweather_warningsTableName, $envcanadaweather_forecastsTableName, $envcanadaweather_forecastsWindsTableName;
 		// get defaults for city
 		if (!isset($attrs['province']) && !isset($attrs['citycode'])) {
 			$province = self::$defaults['province'];
@@ -314,9 +338,11 @@ class EnvCanadaWeather {
 		$cacheKey = $province.':'.$citycode;
 		// is the data cached in memory?
 		if (isset(self::$weatherData[$cacheKey])) {
+			// echo 'in cache';
 			$weatherData = self::$weatherData[$cacheKey];
 		} else {
 			// if it's not in memory, is it stored in the database?
+			// echo 'not in cache; trying database';
 			$q = "SELECT *, UNIX_TIMESTAMP(`timestamp`) AS `timestamp`, UNIX_TIMESTAMP(observationDateTime) AS observationDateTime, UNIX_TIMESTAMP(forecastIssueDateTime) AS forecastIssueDateTime FROM $envcanadaweather_cacheTableName WHERE province = '".mysql_real_escape_string($province)."' AND citycode = '".mysql_real_escape_string($citycode)."'";
 			$weatherData = $wpdb->get_row($q, ARRAY_A);
 			if ($weatherData) {
@@ -325,7 +351,8 @@ class EnvCanadaWeather {
 				$envcanadaweather_warningsTableName WHERE citycode = '".mysql_real_escape_string($citycode)."'";
 				$weatherData['warnings'] = $wpdb->get_results($q, ARRAY_A);
 				// pull in forecasts
-				$q = "SELECT *, UNIX_TIMESTAMP(`dateTime`) AS `dateTime` FROM $envcanadaweather_forecastsTableName a, $envcanadaweather_forecastsWindsTableName b WHERE a.citycode = b.citycode ORDER BY a.`dateTime`";
+				$q = "SELECT *, UNIX_TIMESTAMP(a.`dateTime`) AS `dateTime`, a.period AS forecastPeriod, b.period AS windPeriod FROM $envcanadaweather_forecastsTableName a LEFT OUTER JOIN $envcanadaweather_forecastsWindsTableName b ON a.citycode = b.citycode AND a.period = b.period ORDER BY a.`dateTime`, b.`index`";
+				// echo $q;
 				$weatherData['forecasts'] = array();
 				if ($forecastsData = $wpdb->get_results($q, ARRAY_A)) {
 					$windKeys = array (
@@ -333,52 +360,53 @@ class EnvCanadaWeather {
 						'windSpeed' => null,
 						'windGust' => null,
 						'windDirection' => null,
-						'windBearing' => null
+						'windBearing' => null,
+						'index' => null,
+						'windPeriod' => null,
+						'windDateTime' => null
 					);
+					echo 'row count: '.count($forecastsData)."\n";
 					foreach ($forecastsData as $forecastData) {
 						// get and prune the wind data from the row
 						$windData = array_intersect_key($forecastData, $windKeys);
+						$windData['period'] = $windData['windPeriod'];
+						unset($windData['windPeriod']);
 						$forecastData = array_diff_key($forecastData, $windKeys);
+						$forecastData['period'] = $forecastData['forecastPeriod'];
+						unset($forecastData['forecastPeriod']);
 						/* because we did a simple left join on the
 						 * forecast table and its winds table without
 						 * any grouping, we need to check to see if this
 						 * forecast is already in the array */
-						if (!isset($weatherData['forecasts'][$forecastData['period']])) {
-							$weatherData['forecasts'][$forecastData['period']] = $forecastData;
-							$thisForecast = &$weatherData['forecasts'][$forecastData['period']];
+						$period = $forecastData['period'];
+						echo 'period: '.$period."\n";
+						if (!isset($weatherData['forecasts'][$period])) {
+							$weatherData['forecasts'][$period] = $forecastData;
+							$thisForecast = &$weatherData['forecasts'][$period];
 							$thisForecast['winds'] = array();
-							/* set up aliases so you can refer to fore-
-							 * casts in different ways */
-							switch ($thisForecast['period']) {
-								case 'today':
-									$weatherData['forecasts']['day0'] = &$weatherData['forecasts']['today'];
-									break;
-								case 'tonight':
-									$weatherData['forecasts']['day0.1'] = &$weatherData['forecasts']['tonight'];
-									$weatherData['forecasts']['day0.5'] = &$weatherData['forecasts']['tonight'];
-									break;
-								default:
-									// e.g., if today is Wed, then 'day1' will be aliased to 'Thursday'
-									$daysAhead = (strtotime($wdForecast['period']) - strtotime('today')) / 86400;
-									$weatherData['forecasts']['day'.$daysAhead] = &$weatherData['forecasts'][$wdForecast['period']];
-							}
 						}
-						array_push($thisForecast['winds'], $windData);
+						if ($windData['period']) {
+							array_push($thisForecast['winds'], $windData);
+						}
 					}
 				} // end if ($forecastsData = $wpdb->get_results(...))
 			} // end if ($weatherData)
 			// add data to memory cache
 			$cacheKey = $province.':'.$citycode;
+			self::_aliasForecasts($weatherData['forecasts']);
 			self::$weatherData[$cacheKey] = $weatherData;
 		}
 		/* if not, or if the data is stale, let's prime both memory and
 		 * db cache with fresh info */
 		if (!$weatherData || $weatherData['timestamp'] + self::$defaults['updateinterval'] < time()) {
+			// echo 'not in db or cache expired; fetching new data';
 			$weatherData = self::fetchData($province, $citycode);
 		}
 		if ($weatherData) {
 			// and then output the data!
-			return self::_getDataRecursive ($attrs['field'], $attrs['format'], $weatherData, self::$fieldHints);
+			$format = (isset($attrs['format']) ? $attrs['format'] : null);
+			// print_r($weatherData);
+			return self::_getDataRecursive($attrs['field'], $format, $weatherData, self::$fieldHints);
 		}
 	}
 
@@ -390,22 +418,30 @@ class EnvCanadaWeather {
 			return;
 		}
 		$field = array_shift($fields);
-		// get the proper format; fall over to default if invalid
-		$format = null;
+		// echo $field.' - ';
 		// is this even a valid field?
 		if (isset($fieldHints[$field])) {
 			$fieldHint = $fieldHints[$field];
 		} else {
+			// echo 'no valid field';
 			return;
 		}
 		// is this field included in the current data set?
 		if (isset($weatherData[$field])) {
 			$weatherDatum = $weatherData[$field];
+			//print_r($weatherDatum);
 		} else {
+			//echo 'not here?';
 			return;
 		}
 		// is this node in the weather data an array? if so, dig deeper
 		if (in_array('array', $fieldHint)) {
+			$childKey = array_shift($fields);
+			// echo 'child key is '.$childKey;
+			// echo implode(', ', array_keys($weatherDatum));
+			if (!($weatherDatum = $weatherDatum[$childKey])) {
+				return;
+			}
 			return self::_getDataRecursive($fields, $format, $weatherDatum, $fieldHint['children']);
 		}
 		// fais gracefully when the specified format is not allowed
@@ -489,19 +525,19 @@ class EnvCanadaWeather {
 		$weatherData['timestamp'] = time();
 		foreach ($weather->dateTime as $dateTime) {
 			if ($dateTime['zone'] == 'UTC') {
-				$weatherData['dateTime'] = self::convertTimeData($dateTime->textSummary);
+				$weatherData['dateTime'] = self::_convertTimeData($dateTime->textSummary);
 			}
 		}
-		$weatherData['lat'] = self::convertGeoData($weather->location->name['lat']);
-		$weatherData['lon'] = self::convertGeoData($weather->location->name['lon']);
+		$weatherData['lat'] = self::_convertGeoData($weather->location->name['lat']);
+		$weatherData['lon'] = self::_convertGeoData($weather->location->name['lon']);
 		$weatherData['city'] = (string) $weather->location->name;
 		$weatherData['region'] = (string) $weather->location->region;
 		$weatherData['stationCode'] = (string) $current->station['code'];
-		$weatherData['stationLat'] = self::convertGeoData($current->station['lat']);
-		$weatherData['stationLon'] = self::convertGeoData($current->station['lon']);
+		$weatherData['stationLat'] = self::_convertGeoData($current->station['lat']);
+		$weatherData['stationLon'] = self::_convertGeoData($current->station['lon']);
 		foreach ($current->dateTime as $dateTime) {
 			if ($dateTime['zone'] == 'UTC') {
-				$weatherData['observationDateTime'] = self::convertTimeData($dateTime->textSummary);
+				$weatherData['observationDateTime'] = self::_convertTimeData($dateTime->textSummary);
 			}
 		}
 		$weatherData['condition'] = strtolower($current->condition);
@@ -519,16 +555,16 @@ class EnvCanadaWeather {
 		$weatherData['windBearing'] = (float) $current->wind->bearing;
 
 		// get warnings data
-		$weatherData['warningsURL'] = $weather->warnings['url'];
+		$weatherData['warningsURL'] = (string) $weather->warnings['url'];
 		$weatherData['warnings'] = array ();
 		foreach ($weather->warnings->event as $event) {
 			$wdEvent = array ();
-			$wdEvent['type'] = $event['type'];
-			$wdEvent['priority'] = $event['priority'];
-			$wdEvent['description'] = $event['description'];
+			$wdEvent['type'] = (string) $event['type'];
+			$wdEvent['priority'] = (string) $event['priority'];
+			$wdEvent['description'] = (string) $event['description'];
 			foreach ($event->dateTime as $dateTime) {
 				if ($dateTime['zone'] == 'UTC') {
-					$wdEvent['eventIssueDateTime'] = self::convertTimeData($dateTime->textSummary);
+					$wdEvent['eventIssueDateTime'] = self::_convertTimeData($dateTime->textSummary);
 				}
 			}
 			$weatherData['warnings'][] = $wdEvent;
@@ -538,7 +574,7 @@ class EnvCanadaWeather {
 		$forecastGroup = $weather->forecastGroup;
 		foreach ($forecastGroup->dateTime as $dateTime) {
 			if ($dateTime['zone'] == 'UTC') {
-				$weatherData['forecastIssueDateTime'] = self::convertTimeData($dateTime->textSummary);
+				$weatherData['forecastIssueDateTime'] = self::_convertTimeData($dateTime->textSummary);
 			}
 		}
 		$weatherData['regionalNormals'] = array ();
@@ -548,60 +584,45 @@ class EnvCanadaWeather {
 		$weatherData['forecasts'] = array ();
 		foreach ($forecastGroup->forecast as $forecast) {
 			$wdForecast = array();
-			$wdForecast['period'] = $forecast->period['textForecastName'];
-			$wdForecast['periodLong'] = $forecast->period;
-			$wdForecast['textSummary'] = $forecast->textSummary;
-			$wdForecast['cloudPrecipTextSummary'] = $forecast->cloudPrecip->textSummary;
+			$wdForecast['period'] = (string) $forecast->period['textForecastName'];
+			$wdForecast['periodLong'] = (string) $forecast->period;
+			$wdForecast['textSummary'] = (string) $forecast->textSummary;
+			$wdForecast['cloudPrecipTextSummary'] = (string) $forecast->cloudPrecip->textSummary;
 			$wdForecast['iconCode'] = (int) $forecast->abbreviatedForecast->iconCode;
 			$wdForecast['pop'] = (float) $forecast->abbreviatedForecast->pop;
-			$wdForecast['abbreviatedTextSummary'] = $forecast->abbreviatedForecast->textSummary;
+			$wdForecast['abbreviatedTextSummary'] = (string) $forecast->abbreviatedForecast->textSummary;
 			foreach ($forecast->temperatures->temperature as $temperature) {
 				$wdForecast['temperature'.ucfirst($temperature['class'])] = (float) $temperature;
 			}
-			$wdForecast['windTextSummary'] = $forecast->winds->textSummary;
+			$wdForecast['windTextSummary'] = (string) $forecast->winds->textSummary;
 			$wdForecast['winds'] = array ();
 			foreach ($forecast->winds->wind as $wind) {
 				$wdWind = array ();
-				$wdWind['rank'] = $wind['rank'];
+				$wdWind['index'] = (string) $wind['index'];
+				$wdWind['rank'] = (string) $wind['rank'];
 				$wdWind['windSpeed'] = (float) $wind->speed;
 				$wdWind['windGust'] = (float) $wind->gust;
-				$wdWind['windDirection'] = $wind->direction;
+				$wdWind['windDirection'] = (string) $wind->direction;
 				$wdWind['windBearing'] = (float) $wind->bearing;
-				$wdForecast['winds'][$wind['index']] = $wdWind;
+				$wdForecast['winds'][(string) $wind['index']] = $wdWind;
 			}
 			/* precipitation -- left out precipType['start'] and ['end']
 			 * cuz I honestly don't know what they're for and who would
 			 * use them! */
-			$wdForecast['precipitationTextSummary'] = $forecast->precipitation->textSummary;
-			$wdForecast['precipType'] = $forecast->precipitation->precipType;
-			$wdForecast['precipitationAccumulationType'] = $forecast->precipitation->accumulation->name;
+			$wdForecast['precipitationTextSummary'] = (string) $forecast->precipitation->textSummary;
+			$wdForecast['precipType'] = (string) $forecast->precipitation->precipType;
+			$wdForecast['precipitationAccumulationType'] = (string) $forecast->precipitation->accumulation->name;
 			$wdForecast['precipitationAmount'] = (float) $forecast->precipitation->accumulation->amount;
+			$wdForecast['uvIndex'] = (int) $forecast->uv->index;
+			$wdForecast['uvCategory'] = (string) $forecast->uv['category'];
+			$wdForecast['uvTextSummary'] = (string) $forecast->uv->textSummary;
 			$wdForecast['relativeHumidity'] = (float) $forecast->relativeHumidity;
-			$wdForecast['comfort'] = $forecast->comfort;
-			$wdForecast['comfort'] = $forecast->comfort;
-			$wdForecast['snowLevelTextSummary'] = $forecast->snowLevel->textSummary;
-			switch ($wdForecast['period']) {
-				case 'Today':
-					$wdForecast['dateTime'] = strtotime('today');
-					$weatherData['forecasts']['today'] = $wdForecast;
-					// doing a bit of aliasing so you can refer to it in different ways
-					$weatherData['forecasts']['day0'] = &$weatherData['forecasts']['today'];
-					break;
-				case 'Tonight':
-					$wdForecast['dateTime'] = strtotime('today 18:00');
-					$weatherData['forecasts']['tonight'] = $wdForecast;
-					$weatherData['forecasts']['day0.1'] = &$weatherData['forecasts']['tonight'];
-					$weatherData['forecasts']['day0.5'] = &$weatherData['forecasts']['tonight'];
-					break;
-				default:
-					$wdForecast['dateTime'] = strtotime($wdForecast['period']);
-					// adding this forecast as a key like 'Thursday'
-					$weatherData['forecasts'][$wdForecast['period']] = $wdForecast;
-					// aliasing; e.g., if today is Wed, then 'day1' will be aliased to 'Thursday'
-					$daysAhead = (strtotime($wdForecast['period']) - strtotime('today')) / 86400;
-					$weatherData['forecasts']['day'.$daysAhead] = &$weatherData['forecasts'][$wdForecast['period']];
-			}
+			$wdForecast['comfort'] = (string) $forecast->comfort;
+			$wdForecast['frost'] = (string) $forecast->comfort;
+			$wdForecast['snowLevelTextSummary'] = (string) $forecast->snowLevel->textSummary;
+			$weatherData['forecasts'][$wdForecast['period']] = $wdForecast;
 		}
+		self::_aliasForecasts($weatherData['forecasts']);
 
 		// yesterday's conditions
 		foreach ($weather->yesterdayConditions->temperature as $temperature) {
@@ -618,44 +639,157 @@ class EnvCanadaWeather {
 		self::$weatherData[$cacheKey] = $weatherData;
 
 		// add data to database cache
-		$q = "REPLACE INTO $envcanadaweather_cacheTableName SET ";
-		$qArray = array();
-
-		foreach (self::$fieldHints as $fieldName => $fieldType) {
-			//if ($fieldName == 'warnings') {
-
-			$thisQ = "`$fieldName` = ";
-			if (is_null($weatherData[$fieldName])) {
-				$thisQ .= 'NULL';
-			} else {
-				switch ($fieldType[0]) {
-					case 'string':
-						$thisQ .= "'".mysql_real_escape_string($weatherData[$fieldName])."'";
-						break;
-					case 'float':
-					case 'int':
-						$thisQ .= $weatherData[$fieldName];
-						break;
-					case 'timestamp':
-						$thisQ .= 'FROM_UNIXTIME('.$weatherData[$fieldName].')';
-				}
-			}
-			array_push($qArray, $thisQ);
-		}
-
-		$q .= implode(',', $qArray);
-		$wpdb->query($q);
-
+		self::_saveToDB($envcanadaweather_cacheTableName, array('citycode' => $citycode), array($weatherData), self::$fieldHints);
 		return $weatherData;
+	}
+
+	private function _aliasForecasts (&$forecasts) {
+		foreach ($forecasts as $period => &$forecast) {
+			/* set up aliases so you can refer to forecasts in different
+			 * ways. First, we'll alias to the lowercase period name */
+			$forecasts[strtolower($period)] = &$forecast;
+			/* change period to a string parseable by strtotime(), by
+			 * changing 'night' to 18:00 */
+			$periodActual = strtolower($period);
+			if ($periodActual == 'tonight') {
+				$periodActual = 'today night';
+			}
+			$periodActual = str_replace('night', '18:00', $periodActual);
+			// e.g., if today is Wed, then 'day1' will be aliased to 'Thursday'
+			$daysAhead = (strtotime($periodActual) - strtotime('today')) / 86400;
+			if ($daysAhead % 1) {
+				/* 'day0.1' and 'day0.5' both refer to
+				 * tonight; 'day1.1' and 'day1.5' refer
+				 * to tomorrow night */
+				$forecasts['day'.floor($daysAhead).'.1'] = &$forecast;
+				$forecasts['day'.floor($daysAhead).'.5'] = &$forecast;
+			} else {
+				$forecasts['day'.floor($daysAhead)] = &$forecast;
+			}
+		}
+		if (!isset($forecasts['today'])	) {
+			/* if today's forecast has been superseded by tonight's, set
+			 * up an alias so that tonight will be given instead*/
+			$forecasts['today'] = &$forecasts['tonight'];
+			$forecasts['Today'] = &$forecasts['tonight'];
+			$forecasts['day0'] = &$forecasts['tonight'];
+		}
+	}
+
+	private function _saveToDB($tableName, $extras, $rows, $fieldHints, $primaryKey = null, $foreignKeyCondition = null) {
+		global $wpdb;
+		$citycode = $extras['citycode'];
+		$q = "DELETE FROM $tableName WHERE citycode = '".mysql_real_escape_string($citycode)."'";
+		if ($foreignKeyCondition) {
+			$q .= " AND ".$foreignKeyCondition;
+		}
+		$q .= ";\n";
+		$wpdb->query($q);
+		// empty set of rows is fine, but let's skip insert in that case
+		if (is_array($rows) && count($rows)) {
+			$q = "INSERT INTO $tableName ";
+			$fields = array();
+			$qRows = array();
+			/* if these rows should have a primary key, keep track of
+			 * duplicates -- caused by day-of-week aliases */
+			if ($primaryKey) {
+				$primaryKeys = array();
+			}
+			foreach ($rows as $row) {
+				// skip if it's a duplicate
+				if ($primaryKey) {
+					if (in_array($row[$primaryKey], $primaryKeys)) {
+						continue;
+					} else {
+						$primaryKeys[] = $row[$primaryKey];
+					}
+				}
+				$qRow = array();
+				foreach ($fieldHints as $fieldName => $fieldHint) {
+					if (isset($row[$fieldName])) {
+						$value = $row[$fieldName];
+					} else if (isset($extras[$fieldName])) {
+						/* $extras seems like a terrible kludge; it's
+						 * used for keeping foreign keys which aren't
+						 * normally in child arrays */
+						$value = $extras[$fieldName];
+					} else {
+						$value = null;
+					}
+					switch ($fieldHint[0]) {
+						case 'array':
+							// we want an empty array, so we can purge rows
+							if (!$value) {
+								$value = array();
+							}
+							if (!isset($fieldHint['children']['citycode'])) {
+								$fieldHint['children']['citycode'] = array('string');
+							}
+							if (in_array($fieldName, array('forecasts', 'winds'))) {
+								if (!isset($fieldHint['children']['period'])) {
+									$fieldHint['children']['period'] = array('string');
+								}
+								/* add foreign key to $extras so winds
+								 * can have access to it. */
+								$childExtras = ($fieldName == 'winds' ? array_merge($extras, array('period' => $row['period'])) : $extras);
+							} else {
+								$childExtras = $extras;
+							}
+							$primaryKeyChildren = (isset($fieldHint['primaryKey']) ? $fieldHint['primaryKey'] : null);
+							if (isset($fieldHint['foreignKey']) && isset($row[$fieldHint['foreignKey']])) {
+								$foreignKeyConditionChildren = '`'.$fieldHint['foreignKey'].'` = '.self::_sqlFormat($row[$fieldHint['foreignKey']]);
+							} else {
+								$foreignKeyConditionChildren = null;
+							}
+							self::_saveToDB($fieldHint['table'], $childExtras, $value, $fieldHint['children'], $primaryKeyChildren, $foreignKeyConditionChildren);
+							break;
+						default:
+							if (!in_array($fieldName, $fields)) {
+								$fields[] = $fieldName;
+							}
+							$qRow[] = self::_sqlFormat($value, $fieldHint);
+					}
+				}
+				$qRows[] = '('.implode(',', $qRow).')';
+			}
+			$q .= ' (`'.implode('`,`', $fields).'`) VALUES ';
+			$q .= implode(",\n", $qRows).";\n";
+			$wpdb->query($q);
+		}
+	}
+
+	/* converts native types (the usual string and numeric values, plus
+	 * timestamp format) to MySQL-friendly format */
+	private function _sqlFormat($value, $fieldHint = null) {
+		if (is_null($value)) {
+			return 'NULL';
+		} else {
+			if (!$fieldHint) {
+				$fieldHint = 'string';
+			} else if (is_array($fieldHint)) {
+				$fieldHint = $fieldHint[0];
+			}
+			switch ($fieldHint) {
+				case 'float':
+					return (string) (float) $value;
+				case 'int':
+					return (string) (int) $value;
+				case 'timestamp':
+					return 'FROM_UNIXTIME('.$value.')';
+				case 'string':
+				default:
+					return "'".mysql_real_escape_string($value)."'";
+			}
+		}
 	}
 
 	/* converts unsigned coordinates (with 'N', 'S', 'E', and 'W') into
 	 * more standard signed coordinates */
-	private function convertGeoData ($coord) {
+	private function _convertGeoData ($coord) {
 		$coord = str_split($coord);
 		$direction = strtoupper(array_pop($coord));
 		$coord = (float) implode('', $coord);
-		if (in_array(direction, array('N', 'E'))) {
+		if (in_array($direction, array('N', 'E'))) {
 			return $coord;
 		} else {
 			return 0 - $coord;
@@ -663,7 +797,7 @@ class EnvCanadaWeather {
 	}
 
 	/* converts time data into UNIX timestamp */
-	private function convertTimeData ($datetime) {
+	private function _convertTimeData ($datetime) {
 		return strtotime(str_replace('at ', '', $datetime));
 	}
 }
