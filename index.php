@@ -13,11 +13,11 @@ Author URI: http://heliosstudio.ca
 */
 
 global $wpdb;
-global $envcanadaweather_cacheTableName, $envcanadaweather_warningsTableName, $envcanadaweather_forecastsTableName, $envcanadaweather_forecastsWindsTableName;
+global $envcanadaweather_cacheTableName, $envcanadaweather_warningsTableName, $envcanadaweather_forecastsTableName, $envcanadaweather_forecastsWindsTableName, $envcanadaweather_cache;
 $envcanadaweather_cacheTableName = $wpdb->prefix."envcanadaweather_cache";
 $envcanadaweather_warningsTableName = $wpdb->prefix."envcanadaweather_warnings";
 $envcanadaweather_forecastsTableName = $wpdb->prefix."envcanadaweather_forecasts";
-$envcanadaweather_forecastsWindsTableName = $wpdb->prefix."envcanadaweather_forecasts_winds";
+$envcanadaweather_forecastsWindsTableName = $wpdb->prefix."envcanadaweather_forecasts_winds"; $envcanadaweather_cache = array();
 
 class EnvCanadaWeather {
 	/* $weatherData is just a hashed cache; keys are city codes and
@@ -68,7 +68,7 @@ class EnvCanadaWeather {
 				'description' => array('string'),
 				'eventIssueDateTime' => array('timestamp', 'string', 'datetime', 'date', 'time')
 			),
-			'table' => null
+			'table' => null,
 		),
 		'regionalNormalsLow' => array('float', 'int'),
 		'regionalNormalsHigh' => array('float', 'int'),
@@ -97,7 +97,33 @@ class EnvCanadaWeather {
 					),
 					'table' => null,
 					'primaryKey' => 'index',
-					'foreignKey' => 'period'
+					'foreignKey' => 'period',
+					'aggregate' => array (
+						'windSpeedLowest' => array('float', 'int',
+							'field' => 'windSpeed',
+							'criteria' => 'min'
+						),
+						'windSpeedHighest' => array('float', 'int',
+							'field' => 'windSpeed',
+							'criteria' => 'max'
+						),
+						'windSpeedMinMax' => array('float', 'int',
+							'field' => 'windSpeed',
+							'criteria' => 'minmax'
+						),
+						'windGustLowest' => array('float', 'int',
+							'field' => 'windGust',
+							'criteria' => 'min'
+						),
+						'windGustHighest' => array('float', 'int',
+							'field' => 'windGust',
+							'criteria' => 'max'
+						),
+						'windGustMinMax' => array('float', 'int',
+							'field' => 'windGust',
+							'criteria' => 'minmax'
+						)
+					)
 				),
 				'precipitationTextSummary' => array('string'),
 				'precipType' => array('string'),
@@ -325,34 +351,42 @@ class EnvCanadaWeather {
 	 * 		Really, this should be automatic, but it isn't yet :) */
 
 	public function _getData ($attrs) {
+		/*echo 'attrs ';
+		print_r($attrs);
+		echo ' of type '.gettype($attrs);*/
 		global $wpdb, $envcanadaweather_cacheTableName, $envcanadaweather_warningsTableName, $envcanadaweather_forecastsTableName, $envcanadaweather_forecastsWindsTableName;
 		// get defaults for city
-		if (!isset($attrs['province']) && !isset($attrs['citycode'])) {
+		if (!isset($attrs['province'])) {
 			$province = self::$defaults['province'];
-			$citycode = self::$defaults['citycode'];
 		} else {
 			$province = $attrs['province'];
+		}
+		if (!isset($attrs['citycode'])) {
+			$citycode = self::$defaults['citycode'];
+		} else {
 			$citycode = $attrs['citycode'];
 		}
+		/*echo 'default citycode '.get_site_option('envcanadaweather_defaultcitycode');
+		echo 'specified citycode'.$attrs['citycode'];
+		echo 'province '.serialize($province).', citycode '.serialize($citycode);*/
 		// create a key for the database (and self::$weatherData) cache
 		$cacheKey = $province.':'.$citycode;
 		// is the data cached in memory?
 		if (isset(self::$weatherData[$cacheKey])) {
 			// echo 'in cache';
-			$weatherData = self::$weatherData[$cacheKey];
+			$weatherData = &self::$weatherData[$cacheKey];
 		} else {
 			// if it's not in memory, is it stored in the database?
-			// echo 'not in cache; trying database';
-			$q = "SELECT *, UNIX_TIMESTAMP(`timestamp`) AS `timestamp`, UNIX_TIMESTAMP(observationDateTime) AS observationDateTime, UNIX_TIMESTAMP(forecastIssueDateTime) AS forecastIssueDateTime FROM $envcanadaweather_cacheTableName WHERE province = '".mysql_real_escape_string($province)."' AND citycode = '".mysql_real_escape_string($citycode)."'";
+			$citycodeEscaped = mysql_real_escape_string($citycode);
+			$q = "SELECT *, UNIX_TIMESTAMP(`timestamp`) AS `timestamp`, UNIX_TIMESTAMP(observationDateTime) AS observationDateTime, UNIX_TIMESTAMP(forecastIssueDateTime) AS forecastIssueDateTime FROM $envcanadaweather_cacheTableName WHERE citycode = '$citycodeEscaped'";
 			$weatherData = $wpdb->get_row($q, ARRAY_A);
 			if ($weatherData) {
 				// pull in warnings
 				$q = "SELECT *, UNIX_TIMESTAMP(eventIssueDateTime) AS eventIssueDateTime FROM
-				$envcanadaweather_warningsTableName WHERE citycode = '".mysql_real_escape_string($citycode)."'";
+				$envcanadaweather_warningsTableName WHERE citycode = '$citycodeEscaped'";
 				$weatherData['warnings'] = $wpdb->get_results($q, ARRAY_A);
 				// pull in forecasts
-				$q = "SELECT *, UNIX_TIMESTAMP(a.`dateTime`) AS `dateTime`, a.period AS forecastPeriod, b.period AS windPeriod FROM $envcanadaweather_forecastsTableName a LEFT OUTER JOIN $envcanadaweather_forecastsWindsTableName b ON a.citycode = b.citycode AND a.period = b.period ORDER BY a.`dateTime`, b.`index`";
-				// echo $q;
+				$q = "SELECT *, UNIX_TIMESTAMP(a.`dateTime`) AS `dateTime`, a.period AS forecastPeriod, b.period AS windPeriod FROM $envcanadaweather_forecastsTableName a LEFT OUTER JOIN $envcanadaweather_forecastsWindsTableName b ON a.citycode = b.citycode AND a.period = b.period WHERE a.citycode = '$citycodeEscaped' ORDER BY a.`dateTime`, b.`index`";
 				$weatherData['forecasts'] = array();
 				if ($forecastsData = $wpdb->get_results($q, ARRAY_A)) {
 					$windKeys = array (
@@ -388,15 +422,15 @@ class EnvCanadaWeather {
 						}
 					}
 				} // end if ($forecastsData = $wpdb->get_results(...))
+				$cacheKey = $province.':'.$citycode;
+				self::_aliasForecasts($weatherData['forecasts']);
+				self::$weatherData[$cacheKey] = $weatherData;
 			} // end if ($weatherData)
 			// add data to memory cache
-			$cacheKey = $province.':'.$citycode;
-			self::_aliasForecasts($weatherData['forecasts']);
-			self::$weatherData[$cacheKey] = $weatherData;
 		}
 		/* if not, or if the data is stale, let's prime both memory and
 		 * db cache with fresh info */
-		if (!$weatherData || $weatherData['timestamp'] + self::$defaults['updateinterval'] < time()) {
+		if (!$weatherData || (is_array($weatherData) && $weatherData['timestamp'] + self::$defaults['updateinterval'] < time())) {
 			// echo 'not in db or cache expired; fetching new data';
 			$weatherData = self::fetchData($province, $citycode);
 		}
@@ -427,17 +461,74 @@ class EnvCanadaWeather {
 		// is this field included in the current data set?
 		if (isset($weatherData[$field])) {
 			$weatherDatum = $weatherData[$field];
-			//print_r($weatherDatum);
 		} else {
-			//echo 'not here?';
 			return;
 		}
-		// is this node in the weather data an array? if so, dig deeper
+		// is this node in the weather data an array? if so, get aggregate or dig deeper
 		if (in_array('array', $fieldHint)) {
-			$childKey = array_shift($fields);
+			$childField = array_shift($fields);
+			if (!$childField) {
+				if ($format == 'array') {
+					return $weatherDatum;
+				} else {
+					return;
+				}
+			}
+			if ((isset($fieldHint['children'][$childField]) || isset($fieldHint['aggregate'][$childField]))) {
+				if (is_array($weatherDatum)) {
+					/* look for aggregate hint; if none found, use the
+					 * hint from 'children' key */
+					$childFieldHint = (isset($fieldHint['aggregate'][$childField]) ? $fieldHint['aggregate'][$childField] : $fieldHint['children'][$childField]);
+					/* Is this a special aggregate field that applies a
+					 * function, like min or max, to another field? If
+					 * so, we want to find out what field it performs
+					 * the aggregate on */
+					$childField = (isset($childFieldHint['field']) ? $childFieldHint['field'] : $childField);
+					$childData = array();
+					foreach ($weatherDatum as $k => $v) {
+						$childData[$k] = self::_getDataRecursive($childField, $format, $v, $childFieldHint);
+					}
+					if (!count($childData)) {
+						return;
+					}
+					// for aggregate fields, perform the aggregate func
+					if (isset($childFieldHint['criteria'])) {
+						switch ($childFieldHint['criteria']) {
+							case 'min':
+								return min($childData);
+							case 'max':
+								return max($childData);
+							case 'minmax':
+							case 'minMax':
+								$min = min($childData);
+								$max = max($childData);
+								/* replaces entire child data array with
+								 * min and max values, then breaks rather
+								 * than returning, so format can be
+								 * returned properly */
+								$childData = array($min, $max);
+								break;
+							case 'avg':
+								$count = count($childData);
+								$sum = array_sum($childData);
+								return $sum / $count;
+							case 'sum':
+								return array_sum($childData);
+						}
+					}
+					switch ($format) {
+						case 'array':
+							return $childData;
+						default:
+							return implode(' to ', $childData);
+					}
+				} else {
+					return;
+				}
+			}
 			// echo 'child key is '.$childKey;
 			// echo implode(', ', array_keys($weatherDatum));
-			if (!($weatherDatum = $weatherDatum[$childKey])) {
+			if (!($weatherDatum = $weatherDatum[$childField])) {
 				return;
 			}
 			return self::_getDataRecursive($fields, $format, $weatherDatum, $fieldHint['children']);
@@ -655,6 +746,10 @@ class EnvCanadaWeather {
 			$periodActual = str_replace('night', '18:00', $periodActual);
 			// e.g., if today is Wed, then 'day1' will be aliased to 'Thursday'
 			$daysAhead = (strtotime($periodActual) - strtotime('today')) / 86400;
+			if ($daysAhead == 1) {
+				$forecasts['tomorrow'] = &$forecast;
+				$forecasts['Tomorrow'] = &$forecast;
+			}
 			if ($daysAhead % 1) {
 				/* 'day0.1' and 'day0.5' both refer to
 				 * tonight; 'day1.1' and 'day1.5' refer
