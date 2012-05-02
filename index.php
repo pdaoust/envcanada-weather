@@ -478,7 +478,7 @@ class EnvCanadaWeather {
 				if (is_array($weatherDatum)) {
 					/* look for aggregate hint; if none found, use the
 					 * hint from 'children' key */
-					$childFieldHint = (isset($fieldHint['aggregate'][$childField]) ? $fieldHint['aggregate'][$childField] : $fieldHint['children'][$childField]);
+					$childFieldHint = $fieldHint['children'];
 					/* Is this a special aggregate field that applies a
 					 * function, like min or max, to another field? If
 					 * so, we want to find out what field it performs
@@ -520,12 +520,12 @@ class EnvCanadaWeather {
 						case 'array':
 							return $childData;
 						default:
-							return implode(' to ', $childData);
+							return implode(' to ', array_unique($childData));
 					}
 				} else {
 					return;
 				}
-			}
+			} // end if (is_array($weatherDatum))
 			// echo 'child key is '.$childKey;
 			// echo implode(', ', array_keys($weatherDatum));
 			if (!($weatherDatum = $weatherDatum[$childField])) {
