@@ -521,7 +521,7 @@ class EnvCanadaWeather {
 						case 'array':
 							return $childData;
 						default:
-							$childData = array_reduce($childData, 'self::_uniqueNeighbour');
+							$childData = array_reduce($childData, array(self, '_uniqueNeighbour'));
 							return implode(' to ', $childData);
 					}
 				} else {
