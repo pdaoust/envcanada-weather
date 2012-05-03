@@ -404,6 +404,7 @@ class EnvCanadaWeather {
 						$windData = array_intersect_key($forecastData, $windKeys);
 						$windData['period'] = $windData['windPeriod'];
 						unset($windData['windPeriod']);
+						//print_r($windData);
 						$forecastData = array_diff_key($forecastData, $windKeys);
 						$forecastData['period'] = $forecastData['forecastPeriod'];
 						unset($forecastData['forecastPeriod']);
@@ -418,7 +419,7 @@ class EnvCanadaWeather {
 							$thisForecast['winds'] = array();
 						}
 						if ($windData['period']) {
-							array_push($thisForecast['winds'], $windData);
+							array_push($weatherData['forecasts'][$forecastData['period']]['winds'], $windData);
 						}
 					}
 				} // end if ($forecastsData = $wpdb->get_results(...))
@@ -520,7 +521,8 @@ class EnvCanadaWeather {
 						case 'array':
 							return $childData;
 						default:
-							return implode(' to ', array_unique($childData));
+							$childData = array_reduce($childData, 'self::_uniqueNeighbour');
+							return implode(' to ', $childData);
 					}
 				} else {
 					return;
@@ -772,7 +774,7 @@ class EnvCanadaWeather {
 	private function _saveToDB($tableName, $extras, $rows, $fieldHints, $primaryKey = null, $foreignKeyCondition = null) {
 		global $wpdb;
 		$citycode = $extras['citycode'];
-		$q = "DELETE FROM $tableName WHERE citycode = '".mysql_real_escape_string($citycode)."'";
+		$q = "DELETE FROM $tableName WHERE citycode = ".self::_sqlFormat($citycode);
 		if ($foreignKeyCondition) {
 			$q .= " AND ".$foreignKeyCondition;
 		}
@@ -830,7 +832,11 @@ class EnvCanadaWeather {
 							}
 							$primaryKeyChildren = (isset($fieldHint['primaryKey']) ? $fieldHint['primaryKey'] : null);
 							if (isset($fieldHint['foreignKey']) && isset($row[$fieldHint['foreignKey']])) {
-								$foreignKeyConditionChildren = '`'.$fieldHint['foreignKey'].'` = '.self::_sqlFormat($row[$fieldHint['foreignKey']]);
+								/* prepare to delete all old records from
+								 * child nodes -- and any child nodes with
+								 * other foreign keys that do not have
+								 * corresponding parents yet */
+								$foreignKeyConditionChildren = '`'.$fieldHint['foreignKey'].'` = '.self::_sqlFormat($row[$fieldHint['foreignKey']]).' AND `'.$fieldHint['foreignKey'].'` NOT IN (SELECT `'.$fieldHint['foreignKey'].'` FROM `'.$tableName.'` WHERE citycode = '.self::_sqlFormat($citycode).')';
 							} else {
 								$foreignKeyConditionChildren = null;
 							}
@@ -893,9 +899,20 @@ class EnvCanadaWeather {
 	private function _convertTimeData ($datetime) {
 		return strtotime(str_replace('at ', '', $datetime));
 	}
+
+	private function _uniqueNeighbour ($arr, $item) {
+		if (!is_array($arr)) {
+			$arr = array();
+		}
+		if (end($arr) !== $item) {
+			array_push($arr, $item);
+		}
+		return $arr;
+	}
 }
 
 register_activation_hook(__FILE__, array('EnvCanadaWeather', 'activate'));
 add_action('plugins_loaded', array('EnvCanadaWeather', 'activate'));
 add_shortcode('envcanadaweather_data', array('EnvCanadaWeather', '_getData'));
+
 ?>
