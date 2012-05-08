@@ -339,9 +339,9 @@ class EnvCanadaWeather {
 	 * 			'float': convert a value to a float
 	 * 			'int': make sure the value is not a float; rounds to
 	 * 			the nearest integer
-	 * 			'string': currently for icon codes only; converts an
-	 * 			icon code to its corresponding hint (see above
-	 * 			$iconCodes property)
+	 * 			'string': return as a string, of course. If the field being
+	 * 			looked up is an icon code, it converts the icon code value to
+	 * 			its corresponding text hint (see above $iconCodes property)
 	 *
 	 * 		'citycode': an optional city code; if not specified, uses
 	 * 		envcanadaweather_defaultcitycode from the wp_options table
@@ -351,9 +351,6 @@ class EnvCanadaWeather {
 	 * 		Really, this should be automatic, but it isn't yet :) */
 
 	public function _getData ($attrs) {
-		/*echo 'attrs ';
-		print_r($attrs);
-		echo ' of type '.gettype($attrs);*/
 		global $wpdb, $envcanadaweather_cacheTableName, $envcanadaweather_warningsTableName, $envcanadaweather_forecastsTableName, $envcanadaweather_forecastsWindsTableName;
 		// get defaults for city
 		if (!isset($attrs['province'])) {
@@ -521,7 +518,7 @@ class EnvCanadaWeather {
 						case 'array':
 							return $childData;
 						default:
-							$childData = array_reduce($childData, array(self, '_uniqueNeighbour'));
+							$childData = array_reduce($childData, array('self', '_uniqueNeighbour'));
 							return implode(' to ', $childData);
 					}
 				} else {
